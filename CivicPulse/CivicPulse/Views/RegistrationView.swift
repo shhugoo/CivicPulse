@@ -204,7 +204,18 @@ struct RegistrationView: View {
             errors.append("Las contraseñas no coinciden.")
         }
 
-        if errors.isEmpty, let accountError = authStore.register(identifier: contact, password: password) {
+        let profile = CivicPulseProfile(
+            firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
+            lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
+            identifier: contact.trimmingCharacters(in: .whitespacesAndNewlines),
+            nickname: nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : nickname.trimmingCharacters(in: .whitespacesAndNewlines),
+            birthDate: hasBirthDate ? birthDate : nil,
+            city: selectedCity
+        )
+
+        if errors.isEmpty, let accountError = authStore.register(profile: profile, password: password) {
             errors.append(accountError)
         }
 

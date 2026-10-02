@@ -6,6 +6,7 @@ struct LoginView: View {
     @State private var password = ""
     @State private var message: String?
     @State private var signInSucceeded = false
+    @State private var showDashboard = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -127,12 +128,16 @@ struct LoginView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
+        .navigationDestination(isPresented: $showDashboard) {
+            DashboardView(authStore: authStore)
+        }
     }
 
     private func signIn() {
         signInSucceeded = authStore.signIn(identifier: identifier, password: password)
         if signInSucceeded {
             message = "Inicio de sesión correcto."
+            showDashboard = true
         } else {
             message = "No se encontró una cuenta con esos datos. Comprueba tu teléfono o correo y contraseña."
         }
