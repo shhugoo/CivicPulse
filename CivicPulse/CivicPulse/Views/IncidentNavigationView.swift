@@ -89,7 +89,7 @@ struct IncidentNavigationView: View {
         }
         .overlay(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("RUTA ÓPTIMA · SIMULACIÓN")
+                Text("RUTA OSM · PENALIZACIONES SIMULADAS")
                     .font(.system(size: 10, weight: .black, design: .rounded))
                     .tracking(0.6)
                 Text(route.option.name)
@@ -193,6 +193,10 @@ struct IncidentNavigationView: View {
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(.black.opacity(0.62))
                 .lineLimit(1)
+
+            Link("© OpenStreetMap contributors · OpenRouteService", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(.black.opacity(0.58))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

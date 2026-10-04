@@ -11,6 +11,10 @@ struct IncidentMapView: View {
     @State private var incidentSelected = false
     @State private var showNavigation = false
     @State private var plannedRoute: PlannedRoute?
+    @State private var isLoadingRoutes = false
+    @State private var routeLoadingError: String?
+    @State private var rankedRoutes: [PlannedRoute] = []
+    @State private var selectedRouteID: String?
 
     init(incident: CivicIncident, cityMapData: CityMapData, startingTrafficStep: Int = 0) {
         self.incident = incident
@@ -90,6 +94,7 @@ struct IncidentMapView: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                         incidentSelected = true
                     }
+                    Task { await loadRoutes() }
                 } label: {
                     VStack(spacing: 5) {
                         Text("INCIDENTE · TOCA AQUÍ")
@@ -176,7 +181,7 @@ struct IncidentMapView: View {
                     incident: incident,
                     cityMapData: cityMapData,
                     route: plannedRoute,
-                    startingProgress: responderProgress
+                    startingProgress: 0
                 )
             }
         }
@@ -190,7 +195,7 @@ struct IncidentMapView: View {
             }
         }
         .task {
-            while !Task.isCancelled && responderProgress < 1 {
+            while !Task.isCancelled && responderProgress < 1 && !incidentSelected {
                 do { try await Task.sleep(for: .seconds(1)) } catch { break }
                 guard !Task.isCancelled else { break }
                 withAnimation(.linear(duration: 0.9)) {
@@ -265,7 +270,7 @@ struct IncidentMapView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text("\(incident.routes.count) RUTAS")
+                Text(rankedRoutes.isEmpty ? "ORS" : "\(rankedRoutes.count) RUTAS")
                     .font(.system(size: 10, weight: .black, design: .rounded))
                     .tracking(0.5)
                     .foregroundStyle(.black.opacity(0.7))
@@ -274,63 +279,93 @@ struct IncidentMapView: View {
                     .background(.black.opacity(0.06), in: Capsule())
             }
 
-            ScrollView(.vertical) {
+            if isLoadingRoutes {
+                HStack(spacing: 10) {
+                    ProgressView().tint(.blue)
+                    Text("Calculando rutas con OpenRouteService…")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let routeLoadingError {
                 VStack(alignment: .leading, spacing: 9) {
-                    ForEach(incident.disturbances) { disturbance in
-                        HStack(alignment: .top, spacing: 9) {
-                            Image(systemName: disturbance.symbol)
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(disturbance.blocked ? Color.red : Color.orange)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(disturbance.title)
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.black)
-                                Text(disturbance.detail)
-                                    .font(.system(size: 10, weight: .regular, design: .rounded))
-                                    .foregroundStyle(.black.opacity(0.62))
-                                    .fixedSize(horizontal: false, vertical: true)
+                    Text(routeLoadingError)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.red)
+                    Button("Reintentar cálculo") { Task { await loadRoutes() } }
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.blue)
+                }
+            }
+
+            if let selectedRoute, !selectedRoute.disturbances.isEmpty {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 9) {
+                        ForEach(selectedRoute.disturbances) { disturbance in
+                            HStack(alignment: .top, spacing: 9) {
+                                Image(systemName: disturbance.symbol)
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(disturbance.blocked ? Color.red : Color.orange)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(disturbance.title)
+                                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.black)
+                                    Text(disturbance.detail)
+                                        .font(.system(size: 10, weight: .regular, design: .rounded))
+                                        .foregroundStyle(.black.opacity(0.62))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 0)
                             }
-                            Spacer(minLength: 0)
                         }
                     }
                 }
+                .frame(maxHeight: 100)
+                .scrollIndicators(.hidden)
             }
-            .frame(maxHeight: 142)
-            .scrollIndicators(.hidden)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Comparativa de rutas")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.black.opacity(0.7))
                 ForEach(rankedRoutes, id: \.option.id) { route in
-                    HStack(spacing: 7) {
-                        Image(systemName: route.isBlocked ? "xmark.circle.fill" : "point.topleft.down.to.point.bottomright.curvepath")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(route.isBlocked ? Color.red : Color.blue)
-                        Text(route.option.name)
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(.black.opacity(0.8))
-                        Spacer()
-                        Text(route.isBlocked ? "Cerrada" : "~\(route.estimatedMinutes) min")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(route.isBlocked ? Color.red : Color.black)
-                        if route.option.id == optimalRouteID {
-                            Text("ÓPTIMA")
-                                .font(.system(size: 8, weight: .black, design: .rounded))
-                                .foregroundStyle(Color(red: 0.05, green: 0.36, blue: 0.25))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
-                                .background(Color.green.opacity(0.15), in: Capsule())
+                    Button {
+                        selectedRouteID = route.option.id
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: route.isBlocked ? "xmark.circle.fill" : "point.topleft.down.to.point.bottomright.curvepath")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(route.isBlocked ? Color.red : Color.blue)
+                            Text(route.option.name)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.black.opacity(0.8))
+                            Spacer()
+                            Text(route.isBlocked ? "Cerrada" : "~\(route.estimatedMinutes) min · \(route.option.distanceKilometers.formatted(.number.precision(.fractionLength(1)))) km")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundStyle(route.isBlocked ? Color.red : Color.black)
+                            if route.option.id == selectedRouteID && !route.isBlocked {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(route.isBlocked)
+                    .padding(.vertical, 3)
                 }
             }
 
-            Button(action: calculateRoute) {
+            if !rankedRoutes.isEmpty {
+                Link("© OpenStreetMap contributors · OpenRouteService", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.58))
+            }
+
+            Button(action: startNavigation) {
                 HStack(spacing: 8) {
                     Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                    Text("Comparar y calcular ruta óptima")
+                    Text("Iniciar navegación")
                 }
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
@@ -339,6 +374,8 @@ struct IncidentMapView: View {
                 .background(Color(red: 0.05, green: 0.20, blue: 0.37), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
+            .disabled(selectedRoute == nil || isLoadingRoutes)
+            .opacity(selectedRoute == nil || isLoadingRoutes ? 0.55 : 1)
         }
         .padding(17)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -352,30 +389,40 @@ struct IncidentMapView: View {
         .padding(.bottom, 7)
     }
 
-    private func calculateRoute() {
-        guard let route = RoutePlanner.bestRoute(
-            for: incident,
-            trafficStep: trafficStep,
-            hotspots: cityMapData.trafficHotspots
-        ) else { return }
-        plannedRoute = route
+    private func loadRoutes() async {
+        guard !isLoadingRoutes else { return }
+        isLoadingRoutes = true
+        routeLoadingError = nil
+        defer { isLoadingRoutes = false }
+
+        do {
+            let alternatives = try await OpenRouteService().calculateDrivingRoutes(
+                from: responderCoordinate,
+                to: incident.coordinate,
+                alternativeCount: 3
+            )
+            guard !Task.isCancelled else { return }
+            rankedRoutes = RoutePlanner.rank(
+                alternatives,
+                trafficStep: trafficStep,
+                hotspots: cityMapData.trafficHotspots,
+                closureCoordinate: cityMapData.closureCoordinate
+            )
+            selectedRouteID = rankedRoutes.first(where: { !$0.isBlocked })?.option.id
+            if selectedRouteID == nil { routeLoadingError = "Todas las alternativas atraviesan una calle cortada." }
+        } catch {
+            routeLoadingError = error.localizedDescription
+        }
+    }
+
+    private var selectedRoute: PlannedRoute? {
+        rankedRoutes.first(where: { $0.option.id == selectedRouteID && !$0.isBlocked })
+    }
+
+    private func startNavigation() {
+        guard let selectedRoute else { return }
+        plannedRoute = selectedRoute
         showNavigation = true
-    }
-
-    private var rankedRoutes: [PlannedRoute] {
-        RoutePlanner.compareRoutes(
-            for: incident,
-            trafficStep: trafficStep,
-            hotspots: cityMapData.trafficHotspots
-        )
-    }
-
-    private var optimalRouteID: String? {
-        RoutePlanner.bestRoute(
-            for: incident,
-            trafficStep: trafficStep,
-            hotspots: cityMapData.trafficHotspots
-        )?.option.id
     }
 
     private func mapZoomButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {

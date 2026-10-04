@@ -51,10 +51,7 @@ struct PlannedRoute {
     let option: IncidentRouteOption
     let disturbances: [RouteDisturbance]
     let trafficDelayMinutes: Int
-
-    var isBlocked: Bool {
-        disturbances.contains(where: \.blocked)
-    }
+    let isBlocked: Bool
 
     var estimatedMinutes: Int {
         option.baseMinutes
@@ -64,41 +61,81 @@ struct PlannedRoute {
 }
 
 enum RoutePlanner {
-    static func compareRoutes(
-        for incident: CivicIncident,
+    static func rank(
+        _ alternatives: [OpenRouteAlternative],
         trafficStep: Int,
-        hotspots: [SimulatedTrafficHotspot]
+        hotspots: [SimulatedTrafficHotspot],
+        closureCoordinate: CLLocationCoordinate2D
     ) -> [PlannedRoute] {
-        incident.routes
-            .map { route in
-                let trafficDelay = route.trafficHotspotIDs.reduce(0) { total, hotspotID in
-                    guard let hotspot = hotspots.first(where: { $0.id == hotspotID }) else {
-                        return total
-                    }
-                    switch hotspot.condition(at: trafficStep) {
-                    case .fluid: return total
-                    case .moderate: return total + 2
-                    case .dense: return total + 5
-                    }
+        alternatives.map { alternative in
+            let option = IncidentRouteOption(
+                id: alternative.id,
+                name: alternative.name,
+                coordinates: alternative.coordinates,
+                trafficHotspotIDs: [],
+                baseMinutes: alternative.durationMinutes,
+                distanceKilometers: alternative.distanceKilometers,
+                directions: alternative.instructions
+            )
+
+            var disturbances: [RouteDisturbance] = []
+            var trafficDelay = 0
+            for hotspot in hotspots where routePassesNear(alternative.coordinates, point: hotspot.coordinate, radius: hotspot.radiusMeters) {
+                let condition = hotspot.condition(at: trafficStep)
+                let delay: Int
+                switch condition {
+                case .fluid: delay = 0
+                case .moderate: delay = 2
+                case .dense: delay = 5
                 }
-                return PlannedRoute(
-                    option: route,
-                    disturbances: incident.disturbances.filter { $0.affectedRouteIDs.contains(route.id) },
-                    trafficDelayMinutes: trafficDelay
-                )
+                guard delay > 0 else { continue }
+                trafficDelay += delay
+                disturbances.append(RouteDisturbance(
+                    id: "traffic-\(alternative.id)-\(hotspot.id)",
+                    title: "Tráfico \(condition.rawValue.lowercased()) en \(hotspot.street)",
+                    detail: "Penalización simulada de \(delay) min en esta zona.",
+                    symbol: "car.rear.waves.up",
+                    delayMinutes: 0,
+                    blocked: false,
+                    affectedRouteIDs: [alternative.id]
+                ))
             }
-            .sorted { first, second in
-                if first.isBlocked != second.isBlocked { return !first.isBlocked }
-                return first.estimatedMinutes < second.estimatedMinutes
+
+            let isBlocked = routePassesNear(alternative.coordinates, point: closureCoordinate, radius: 115)
+            if isBlocked {
+                disturbances.append(RouteDisturbance(
+                    id: "closure-\(alternative.id)",
+                    title: "Calle cortada por obras",
+                    detail: "Esta ruta atraviesa el corte simulado y queda descartada.",
+                    symbol: "cone.fill",
+                    delayMinutes: 0,
+                    blocked: true,
+                    affectedRouteIDs: [alternative.id]
+                ))
             }
+
+            return PlannedRoute(
+                option: option,
+                disturbances: disturbances,
+                trafficDelayMinutes: trafficDelay,
+                isBlocked: isBlocked
+            )
+        }
+        .sorted { first, second in
+            if first.isBlocked != second.isBlocked { return !first.isBlocked }
+            return first.estimatedMinutes < second.estimatedMinutes
+        }
     }
 
-    static func bestRoute(
-        for incident: CivicIncident,
-        trafficStep: Int,
-        hotspots: [SimulatedTrafficHotspot]
-    ) -> PlannedRoute? {
-        compareRoutes(for: incident, trafficStep: trafficStep, hotspots: hotspots).first(where: { !$0.isBlocked })
+    private static func routePassesNear(
+        _ route: [CLLocationCoordinate2D],
+        point: CLLocationCoordinate2D,
+        radius: CLLocationDistance
+    ) -> Bool {
+        let target = CLLocation(latitude: point.latitude, longitude: point.longitude)
+        return route.contains { coordinate in
+            CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude).distance(from: target) <= radius
+        }
     }
 }
 
