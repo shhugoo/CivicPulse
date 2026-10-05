@@ -9,6 +9,10 @@ struct DashboardView: View {
     @State private var cityMapData = CityMapData.salamanca
     @State private var isLoadingCity = false
     @State private var cityLoadError: String?
+    @State private var weather: CurrentWeather?
+    @State private var isLoadingWeather = false
+    @State private var weatherError: String?
+    @State private var weatherRequestID = UUID()
 
     var body: some View {
         ZStack {
@@ -45,6 +49,22 @@ struct DashboardView: View {
                         .accessibilityLabel("Ajustes y datos personales")
                     }
                     .padding(.top, 14)
+
+                    WeatherCardView(
+                        cityName: selectedCity,
+                        weather: weather,
+                        isLoading: isLoadingCity || isLoadingWeather,
+                        errorMessage: weatherError ?? cityLoadError,
+                        onRefresh: {
+                            Task {
+                                if cityLoadError != nil {
+                                    await loadCityMap()
+                                } else {
+                                    await loadWeather(for: cityMapData)
+                                }
+                            }
+                        }
+                    )
 
                     profileCard
 
@@ -157,14 +177,16 @@ struct DashboardView: View {
     private func loadCityMap() async {
         let city = selectedCity
         cityLoadError = nil
+        weather = nil
+        weatherError = nil
         guard city.caseInsensitiveCompare("Salamanca") != .orderedSame else {
             cityMapData = .salamanca
             isLoadingCity = false
+            await loadWeather(for: .salamanca)
             return
         }
 
         isLoadingCity = true
-        defer { isLoadingCity = false }
 
         let request = MKLocalSearch.Request(naturalLanguageQuery: "\(city), Spain")
         request.region = MKCoordinateRegion(
@@ -177,12 +199,40 @@ struct DashboardView: View {
             guard !Task.isCancelled else { return }
             guard let coordinate = response.mapItems.first?.placemark.coordinate else {
                 cityLoadError = "No se pudo encontrar el mapa de \(city). Comprueba la conexión e inténtalo de nuevo."
+                isLoadingCity = false
                 return
             }
-            cityMapData = .centered(city: city, at: coordinate)
+            let resolvedMap = CityMapData.centered(city: city, at: coordinate)
+            cityMapData = resolvedMap
+            isLoadingCity = false
+            await loadWeather(for: resolvedMap)
         } catch {
             guard !Task.isCancelled else { return }
             cityLoadError = "No se pudo cargar el mapa de \(city). Comprueba la conexión e inténtalo de nuevo."
+            isLoadingCity = false
+        }
+    }
+
+    @MainActor
+    private func loadWeather(for mapData: CityMapData) async {
+        let requestID = UUID()
+        weatherRequestID = requestID
+        isLoadingWeather = true
+        weather = nil
+        weatherError = nil
+        defer {
+            if weatherRequestID == requestID { isLoadingWeather = false }
+        }
+
+        do {
+            let result = try await OpenMeteoService().currentWeather(at: mapData.center)
+            guard !Task.isCancelled,
+                  weatherRequestID == requestID,
+                  selectedCity.caseInsensitiveCompare(mapData.cityName) == .orderedSame else { return }
+            weather = result
+        } catch {
+            guard !Task.isCancelled, weatherRequestID == requestID else { return }
+            weatherError = "No se pudo consultar el tiempo. Comprueba la conexión e inténtalo de nuevo."
         }
     }
 
