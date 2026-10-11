@@ -1,7 +1,7 @@
 # CivicPulse
 AI-Powered predictive platform, designed for smart cities and usable by people from all ages.
 
-Development scope
+Development scope:
 Civic-Pulse was developed while participating in Telefonica's contest: Líderes Digitales
 The app obtained the prize for being one of the 4 best-developed apps in the context of the own event.
 
